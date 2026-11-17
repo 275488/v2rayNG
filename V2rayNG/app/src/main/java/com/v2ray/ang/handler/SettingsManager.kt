@@ -12,7 +12,7 @@ import com.v2ray.ang.AppConfig.GEOSITE_PRIVATE
 import com.v2ray.ang.AppConfig.TAG_DIRECT
 import com.v2ray.ang.AppConfig.VPN
 import com.v2ray.ang.dto.V2rayConfig
-import com.v2ray.ang.dto.entities.ProfileItem
+import com.v2ray.ang.dto.entities.ProfileEntry
 import com.v2ray.ang.dto.entities.RulesetItem
 import com.v2ray.ang.dto.entities.SubscriptionItem
 import com.v2ray.ang.enums.EConfigType
@@ -43,6 +43,7 @@ object SettingsManager {
         initRoutingRulesets(context)
         migrateServerListToSubscriptions()
         migrateHysteria2PinSHA256()
+        migrateProxyChainProfileList()
     }
 
     /**
@@ -206,20 +207,14 @@ object SettingsManager {
      * @param remarks The remarks of the server.
      * @return The ProfileItem.
      */
-    fun getServerViaRemarks(remarks: String?): ProfileItem? {
-        return getServerViaRemarksWithGuid(remarks)?.second
-    }
-
-    /** Resolve legacy remark references without losing the stored server identity. */
-    fun getServerViaRemarksWithGuid(remarks: String?): Pair<String, ProfileItem>? {
+    fun getProfileEntryViaRemarks(remarks: String?): ProfileEntry? {
         if (remarks.isNullOrEmpty()) {
             return null
         }
         val serverList = decodeAllServerList()
         return serverList
-            .asSequence()
-            .mapNotNull { guid -> decodeServerConfig(guid)?.let { guid to it } }
-            .firstOrNull { it.second.remarks == remarks }
+            .mapNotNull { guid -> decodeServerConfig(guid)?.let { ProfileEntry(guid, it) } }
+            .firstOrNull { it.profile.remarks == remarks }
     }
 
     /**
@@ -509,6 +504,31 @@ object SettingsManager {
             }
             profile.pinnedCA256 = profile.pinSHA256
             profile.pinSHA256 = null
+            MmkvManager.encodeServerConfig(guid, profile)
+        }
+
+        MmkvManager.encodeSettings(migrationKey, true)
+    }
+
+    private fun migrateProxyChainProfileList() {
+        // Check if migration has already been done
+        val migrationKey = "proxy_chain_profile_list_migrated"
+        if (MmkvManager.decodeSettingsBool(migrationKey, false)) {
+            return
+        }
+
+        val serverList = decodeAllServerList()
+
+        for (guid in serverList) {
+            val profile = decodeServerConfig(guid) ?: continue
+            if (profile.proxyChainProfiles.isNullOrEmpty() || !profile.proxyChainProfileList.isNullOrEmpty()) {
+                continue
+            }
+            profile.proxyChainProfileList = profile.proxyChainProfiles
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+            profile.proxyChainProfiles = null
             MmkvManager.encodeServerConfig(guid, profile)
         }
 
